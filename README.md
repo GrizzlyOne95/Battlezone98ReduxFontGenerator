@@ -3,6 +3,8 @@ A lightweight tool for modders to create custom `bzone.png` font atlases.
 
 Developed by **GrizzlyOne95**.
 
+<img width="442" height="482" alt="image" src="https://github.com/user-attachments/assets/09892d94-4503-4690-b42a-06cc2b582a46" />
+
 ## Features
 - **Dual Font Support:** Use one font for letters and another for numbers/symbols.
 - **Auto-Alignment:** Automatically sit characters on the correct baseline for the BZ98 engine.

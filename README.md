@@ -20,6 +20,8 @@ Developed by **GrizzlyOne95**.
 5. Copy the resulting `bzone.png` into your mod's texture directory.
 
 <img width="1024" height="1024" alt="bzone_cyber_complete" src="https://github.com/user-attachments/assets/9fa232a9-8f9f-4e41-a79c-7efdee3ccc5c" />
+### Troubleshooting
+- If characters generate missing or with rectangles/invalid symbols, your font most likely is missing those characters. Try another font file.
 
 ### For Developers
 If you want to run from source:

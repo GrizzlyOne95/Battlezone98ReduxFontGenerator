@@ -21,6 +21,11 @@ Developed by **GrizzlyOne95**.
 
 <img width="1024" height="1024" alt="bzone_cyber_complete" src="https://github.com/user-attachments/assets/9fa232a9-8f9f-4e41-a79c-7efdee3ccc5c" />
 
+### Overlay comparison between generated font and original Battlezone font
+
+<img width="700" height="225" alt="image" src="https://github.com/user-attachments/assets/0ed2a0a2-1d5c-473e-bc2f-80557a5dd336" />
+
+
 ### Troubleshooting
 - If characters generate missing or with rectangles/invalid symbols, your font most likely is missing those characters. Try another font file.
 

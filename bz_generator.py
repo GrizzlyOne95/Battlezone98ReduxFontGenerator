@@ -1,20 +1,19 @@
 import os
 import sys
-import subprocess
+import struct
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from PIL import Image, ImageDraw, ImageFont
+import webbrowser
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-# --- PYINSTALLER PATH HELPER ---
 def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-def draw_custom_caret(draw, x, y, w, h, color=(255, 255, 255)):
+def draw_custom_caret(draw, x, y, w, h, color=(255, 255, 255, 255)):
     padding_x = w * 0.25
     top_y = y + (h * 0.3)
     bottom_y = y + (h * 0.6)
@@ -24,14 +23,10 @@ def draw_custom_caret(draw, x, y, w, h, color=(255, 255, 255)):
     draw.line([(left_x, bottom_y), (mid_x, top_y)], fill=color, width=4)
     draw.line([(mid_x, top_y), (right_x, bottom_y)], fill=color, width=4)
 
-def generate_bzone(letter_font_path, fallback_font_path):
+def generate_sheet_image(let_f, sym_f, u_v, l_v, n_v, s_v, h_nudge, f_size, center_lower, show_grid):
     width, height = 1024, 1024
-    output_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__)
-    output_sheet = os.path.join(output_dir, "bzone.png") # UPDATED FILENAME
-    
-    new_img = Image.new("RGBA", (width, height), (0, 0, 0, 255))
-    draw = ImageDraw.Draw(new_img)
-    font_size = 55  
+    work_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(work_layer)
     
     row1_y, row2_y = 13, 93
     row3_upper_y, row3_lower_y = 173, 187
@@ -69,101 +64,146 @@ def generate_bzone(letter_font_path, fallback_font_path):
     for r_idx, row_text in enumerate(rows_data):
         for char in row_text:
             if char not in manual_data: continue
+            x_base, target_w, target_h = manual_data[char]
             
-            current_font_path = letter_font_path if char.isalpha() else fallback_font_path
-            try: font = ImageFont.truetype(current_font_path, font_size)
-            except: font = ImageFont.load_default()
+            y_base = row1_y if r_idx == 0 else row2_y if r_idx == 1 else \
+                     (row3_lower_y if char in "abcdef" else row3_upper_y) if r_idx == 2 else \
+                     (row4_symbol_y if char in "{|}" else row4_alpha_y)
 
-            x, target_w, target_h = manual_data[char]
-            
-            if r_idx == 0: y = row1_y
-            elif r_idx == 1: y = row2_y
-            elif r_idx == 2: y = row3_lower_y if char in "abcdef" else row3_upper_y
-            else: y = row4_symbol_y if char in "{|}" else row4_alpha_y
+            v_val = u_v if char.isupper() else l_v if char.islower() else n_v if char.isdigit() else s_v
+
+            if show_grid:
+                draw.rectangle([x_base, y_base, x_base + target_w, y_base + target_h], outline=(0, 255, 255, 120))
 
             if char == "^":
-                draw_custom_caret(draw, x, y, target_w, target_h)
+                draw_custom_caret(draw, x_base + h_nudge, y_base - v_val, target_w, target_h)
                 continue
+
+            font_path = let_f if char.isalpha() else sym_f
+            try: font = ImageFont.truetype(font_path, f_size)
+            except: font = ImageFont.load_default()
 
             bbox = draw.textbbox((0, 0), char, font=font)
             text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            draw_x = x + (target_w - text_w) // 2 - bbox[0]
             
-            if char.islower() and char not in "{|}~":
-                draw_y = y + target_h - text_h - bbox[1]
+            # Center horizontally within the slot
+            draw_x = (x_base + (target_w - text_w) // 2 - bbox[0]) + h_nudge
+            
+            # Handle descenders for lowercase 'j', 'g', 'p', 'q', 'y'
+            if char.islower() and not center_lower and char not in "{|}~":
+                draw_y = (y_base + target_h - text_h - bbox[1]) - v_val
             else:
-                draw_y = y + (target_h - text_h) // 2 - bbox[1]
+                draw_y = (y_base + (target_h - text_h) // 2 - bbox[1]) - v_val
 
-            draw.text((draw_x, draw_y), char, fill=(255, 255, 255), font=font)
+            draw.text((draw_x, draw_y), char, fill=(255, 255, 255, 255), font=font)
 
-    new_img.save(output_sheet)
-    
-    if messagebox.askyesno("Success", f"Sheet 'bzone.png' Generated!\n\nOpen output folder?"):
-        if sys.platform == "win32":
-            os.startfile(output_dir)
-        else:
-            subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", output_dir])
+    preview_bg = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    preview_bg.paste(work_layer, (0, 0), work_layer)
+    return preview_bg, work_layer
+
+def save_as_dds_native(image, filename):
+    width, height = image.size
+    with open(filename, 'wb') as f:
+        f.write(b'DDS ')
+        f.write(struct.pack('<IIIIIII', 124, 0x1 + 0x2 + 0x4 + 0x8 + 0x1000, height, width, width * 4, 0, 0))
+        f.write(b'\x00' * 44) 
+        f.write(struct.pack('<IIIIIIII', 32, 0x41, 0, 32, 0x000000FF, 0x0000FF00, 0x00FF0000, 0xFF000000))
+        f.write(struct.pack('<IIIII', 0x1000, 0, 0, 0, 0))
+        f.write(image.tobytes())
 
 class BzoneApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Battlezone 98 Redux Font Sheet Generator")
-        self.root.geometry("440x450")
-        self.root.resizable(False, False)
+        self.root.title("BZ98 Redux Font Generator")
+        self.root.geometry("1100x900")
         
-        self.default_f = resource_path("Orbitron-Bold.ttf")
-        self.letter_font = self.default_f
-        self.symbol_font = self.default_f
-
-        tk.Label(root, text="Battlezone Atlas Generator", font=("Arial", 14, "bold")).pack(pady=15)
+        self.let_f = resource_path("Orbitron-Bold.ttf")
+        self.sym_f = resource_path("Orbitron-Bold.ttf")
         
-        # Letter Section
-        tk.Label(root, text="Letter Font (A-Z):", font=("Arial", 10, "bold")).pack()
-        self.lbl_letter = tk.Label(root, text="Default (Orbitron)", fg="#555")
-        self.lbl_letter.pack()
-        tk.Button(root, text="Select Font", command=self.set_let, width=15).pack(pady=5)
+        self.u_v, self.l_v, self.n_v, self.s_v = tk.IntVar(value=0), tk.IntVar(value=5), tk.IntVar(value=0), tk.IntVar(value=0)
+        self.h_n = tk.IntVar(value=0)
+        self.f_size = tk.IntVar(value=55) # New Font Size variable
+        self.center_lower = tk.BooleanVar(value=False)
+        self.show_grid = tk.BooleanVar(value=False)
 
-        # Symbol Section
-        tk.Label(root, text="Numbers & Symbols Font:", font=("Arial", 10, "bold")).pack(pady=(15,0))
-        self.lbl_sym = tk.Label(root, text="Default (Orbitron)", fg="#555")
-        self.lbl_sym.pack()
-        tk.Button(root, text="Select Font", command=self.set_sym, width=15).pack(pady=5)
+        main = tk.Frame(root)
+        main.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        left = tk.Frame(main, width=300)
+        left.pack(side="left", fill="y", padx=10)
+        
+        tk.Label(left, text="Font Selection", font=("Arial", 10, "bold")).pack()
+        tk.Button(left, text="Choose Letter Font", command=self.set_let).pack(fill="x")
+        tk.Button(left, text="Choose Symbol Font", command=self.set_sym).pack(fill="x", pady=5)
+        
+        tk.Label(left, text="Font Settings", font=("Arial", 10, "bold")).pack(pady=5)
+        tk.Label(left, text="Global Font Size").pack()
+        tk.Scale(left, from_=30, to=70, orient="horizontal", variable=self.f_size, command=lambda x: self.update_preview()).pack(fill="x")
 
-        # Final Run
-        tk.Button(root, text="GENERATE BZONE.PNG", bg="#1a73e8", fg="white", font=("Arial", 11, "bold"),
-                  height=2, width=25, command=lambda: generate_bzone(self.letter_font, self.symbol_font)).pack(pady=20)
+        tk.Label(left, text="Vertical Nudges", font=("Arial", 10, "bold")).pack(pady=5)
+        for lbl, var in [("Uppercase", self.u_v), ("Lowercase", self.l_v), ("Numbers", self.n_v), ("Symbols", self.s_v)]:
+            tk.Label(left, text=lbl).pack()
+            tk.Scale(left, from_=-30, to=30, orient="horizontal", variable=var, command=lambda x: self.update_preview()).pack(fill="x")
 
-        # About Button
-        tk.Button(root, text="About / Credits", font=("Arial", 9), command=self.show_about).pack(pady=10)
+        tk.Label(left, text="Alignment", font=("Arial", 10, "bold")).pack(pady=5)
+        tk.Scale(left, from_=-20, to=20, orient="horizontal", variable=self.h_n, command=lambda x: self.update_preview()).pack(fill="x")
+        tk.Checkbutton(left, text="Force Center Lowercase", variable=self.center_lower, command=self.update_preview).pack(anchor="w")
+        tk.Checkbutton(left, text="Show Layout Grid", variable=self.show_grid, command=self.update_preview).pack(anchor="w")
+
+        tk.Button(left, text="EXPORT DDS", bg="#34a853", fg="white", font=("Arial", 12, "bold"), height=2, command=self.export_dds).pack(fill="x", pady=20)
+        
+        tk.Frame(left).pack(expand=True, fill="both")
+        tk.Button(left, text="About", command=self.show_about).pack(fill="x")
+
+        right = tk.Frame(main)
+        right.pack(side="right", fill="both", expand=True)
+        self.canvas = tk.Canvas(right, bg="black", width=512, height=512)
+        self.canvas.pack(pady=20)
+        self.update_preview()
 
     def show_about(self):
-        about_text = (
-            "Battlezone 98 Redux Font Sheet Generator\n"
-            "------------------------------------------\n"
-            "This tool generates a 1024x1024 bzone.png atlas \n"
-            "compatible with the Redux engine.\n\n"
-            "Instructions:\n"
-            "1. Select a .ttf or .otf font for letters.\n"
-            "2. Select a font for numbers/symbols (or keep Orbitron).\n"
-            "3. Click Generate. The file 'bzone.png' will be created\n"
-            "   in the same folder as this application.\n"
-            "4. Replace the existing bzone.png in your game assets.\n\n"
-            "Note: Currently only standard alpha-numeric characters are supported.\n\n"
-            "Credits: GrizzlyOne95"
-        )
-        messagebox.showinfo("About / Instructions", about_text)
+        about = tk.Toplevel(self.root)
+        about.title("About BZFont Generator")
+        about.geometry("450x450")
+        container = tk.Frame(about, padx=20, pady=20)
+        container.pack()
+        tk.Label(container, text="Battlezone 98 Redux Font Generator", font=("Arial", 12, "bold")).pack()
+        tk.Label(container, text="Credits: GrizzlyOne95", font=("Arial", 10, "italic")).pack(pady=(0, 10))
+        tk.Label(container, text="Exports native 32-bit uncompressed DDS files.", wraplength=400, justify="left").pack()
+        link = tk.Label(container, text="\nGitHub Repository", fg="blue", cursor="hand2", font=("Arial", 10, "underline"))
+        link.pack()
+        link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/GrizzlyOne95/Battlezone98ReduxFontGenerator"))
+        tk.Button(container, text="Close", command=about.destroy).pack(pady=20)
+
+    def update_preview(self):
+        final_img, _ = generate_sheet_image(self.let_f, self.sym_f, self.u_v.get(), self.l_v.get(), 
+                                            self.n_v.get(), self.s_v.get(), self.h_n.get(), 
+                                            self.f_size.get(),
+                                            self.center_lower.get(), self.show_grid.get())
+        prev = final_img.resize((512, 512), Image.Resampling.LANCZOS)
+        self.tk_img = ImageTk.PhotoImage(prev)
+        self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+
+    def export_dds(self):
+        _, export_img = generate_sheet_image(self.let_f, self.sym_f, self.u_v.get(), self.l_v.get(), 
+                                             self.n_v.get(), self.s_v.get(), self.h_n.get(), 
+                                             self.f_size.get(),
+                                             self.center_lower.get(), False)
+        f_path = filedialog.asksaveasfilename(defaultextension=".dds", initialfile="bzfont.dds", filetypes=[("DDS", "*.dds")])
+        if f_path:
+            try:
+                save_as_dds_native(export_img, f_path)
+                messagebox.showinfo("Success", "DDS exported successfully!")
+            except Exception as e:
+                messagebox.showerror("Export Error", f"Failed: {e}")
 
     def set_let(self):
         f = filedialog.askopenfilename(filetypes=[("Fonts", "*.ttf *.otf")])
-        if f: 
-            self.letter_font = f
-            self.lbl_letter.config(text=os.path.basename(f), fg="#1a73e8")
+        if f: self.let_f = f; self.update_preview()
 
     def set_sym(self):
         f = filedialog.askopenfilename(filetypes=[("Fonts", "*.ttf *.otf")])
-        if f: 
-            self.symbol_font = f
-            self.lbl_sym.config(text=os.path.basename(f), fg="#1a73e8")
+        if f: self.sym_f = f; self.update_preview()
 
 if __name__ == "__main__":
     root = tk.Tk()

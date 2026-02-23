@@ -3,7 +3,8 @@ A lightweight tool for modders to create custom `bzone.png` font atlases.
 
 Developed by **GrizzlyOne95**.
 
-<img width="1102" height="932" alt="image" src="https://github.com/user-attachments/assets/edac26e6-5cbd-4588-b4e1-df913748fa65" />
+<img width="1102" height="982" alt="image" src="https://github.com/user-attachments/assets/9b0d8439-8a26-42b6-9b27-c5292aab1d04" />
+
 
 
 ## Features

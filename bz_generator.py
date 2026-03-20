@@ -1,19 +1,97 @@
-import os
-import sys
-import struct
+import ctypes
 import json
+import os
+from pathlib import Path
+import struct
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import webbrowser
-import ctypes
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
+
+APP_TITLE = "BZ98 Redux Font Generator"
+STOCK_REFERENCE_SIZE = 128
+ATLAS_SIZE = 1024
+ATLAS_SCALE = ATLAS_SIZE // STOCK_REFERENCE_SIZE
+STOCK_GLYPH_HEIGHT = 9
+ASCII_ROWS = (
+    "!\"#$%&'()*+,-./012345678",
+    "9:;<=>?@ABCDEFGHIJKLMNOP",
+    "QRSTUVWXYZ[\\]^_`abcdef",
+    "ghijklmnopqrstuvwxyz{|}~",
+)
+STOCK_GLYPH_ROWS = (
+    (0, " !\"#$%&'()*+,-./012345678", (3, 1, 3, 5, 5, 5, 5, 2, 3, 3, 5, 5, 2, 5, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5)),
+    (10, "9:;<=>?@ABCDEFGHIJKLMNOP", (5, 1, 1, 3, 5, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 1, 5, 5, 5, 5, 5, 5, 5)),
+    (20, "QRSTUVWXYZ[\\]^_`abcdef", (5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 5, 3, 5, 5, 2, 5, 5, 5, 5, 5, 5)),
+    (30, "ghijklmnopqrstuvwxyz{|}", (5, 5, 1, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 3, 1, 3)),
+    (40, "~", (5,)),
+)
+DEFAULT_COLORS = {
+    "bg": "#0a0a0a",
+    "fg": "#d4d4d4",
+    "highlight": "#00ff00",
+    "dark_highlight": "#004400",
+    "accent": "#00ffff",
+}
+DEFAULT_OVERLAY_OPACITY = 40
+
+
+def bundle_dir():
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent
+
+
+def app_dir():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
 
 def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+    return str(bundle_dir() / relative_path)
+
+
+def stock_overlay_candidates():
+    user_profile = Path.home()
+    candidates = [
+        user_profile / "Documents" / "Battlezone 98 Redux" / "BZ_ASSETS" / "common" / "textures" / "PNGS" / "bzone.png",
+        Path(r"C:\GOG Games\Battlezone 98 Redux\BZ_ASSETS\common\textures\PNGS\bzone.png"),
+    ]
+
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if program_files_x86:
+        candidates.append(
+            Path(program_files_x86) / "Steam" / "steamapps" / "common" / "Battlezone 98 Redux" / "BZ_ASSETS" / "common" / "textures" / "PNGS" / "bzone.png"
+        )
+    return candidates
+
+
+def find_default_overlay_path():
+    for candidate in stock_overlay_candidates():
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def build_stock_glyph_layout():
+    layout = {}
+    for row_v, row_text, widths in STOCK_GLYPH_ROWS:
+        u = 0
+        for char, width in zip(row_text, widths):
+            if char != " ":
+                layout[char] = (
+                    u * ATLAS_SCALE,
+                    row_v * ATLAS_SCALE,
+                    width * ATLAS_SCALE,
+                    STOCK_GLYPH_HEIGHT * ATLAS_SCALE,
+                )
+            u += width + 1
+    return layout
+
+
+GLYPH_LAYOUT = build_stock_glyph_layout()
 
 class ToolTip:
     def __init__(self, widget, text, bg="#1a1a1a", fg="#00ffff"):
@@ -26,6 +104,8 @@ class ToolTip:
         widget.bind("<Leave>", self.hide_tip)
 
     def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
         x = self.widget.winfo_rootx() + 25
         y = self.widget.winfo_rooty() + 20
         self.tip_window = tw = tk.Toplevel(self.widget)
@@ -51,52 +131,33 @@ def draw_custom_caret(draw, x, y, w, h, color=(255, 255, 255, 255)):
     draw.line([(left_x, bottom_y), (mid_x, top_y)], fill=color, width=4)
     draw.line([(mid_x, top_y), (right_x, bottom_y)], fill=color, width=4)
 
-def generate_sheet_image(let_f, sym_f, u_v, l_v, n_v, s_v, h_nudge, f_size, center_lower, show_grid):
-    width, height = 1024, 1024
+
+def get_render_font(font_cache, font_path, font_size):
+    cache_key = (font_path, font_size)
+    font = font_cache.get(cache_key)
+    if font is None:
+        try:
+            font = ImageFont.truetype(font_path, font_size)
+        except (OSError, ValueError):
+            font = ImageFont.load_default()
+        font_cache[cache_key] = font
+    return font
+
+
+def generate_sheet_image(let_f, sym_f, u_v, l_v, n_v, s_v, h_nudge, f_size, center_lower, show_grid, font_cache=None):
+    width, height = ATLAS_SIZE, ATLAS_SIZE
     work_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(work_layer)
-    
-    row1_y, row2_y = 13, 93
-    row3_upper_y, row3_lower_y = 173, 187
-    row4_alpha_y, row4_symbol_y = 266, 254 
 
-    manual_data = {
-        "!": (28, 16, 62), "\"": (43, 35, 62), "#": (80, 41, 62), "$": (128, 41, 62),
-        "%": (176, 41, 62), "&": (225, 41, 62), "'": (270, 23, 62), "(": (295, 32, 62),
-        ")": (322, 32, 62), "*": (358, 45, 62), "+": (405, 45, 62), ",": (452, 25, 62),
-        "-": (482, 34, 62), ".": (525, 13, 62), "/": (543, 42, 62), "0": (591, 42, 62),
-        "1": (638, 42, 62), "2": (685, 42, 62), "3": (734, 42, 62), "4": (783, 42, 62),
-        "5": (832, 42, 62), "6": (877, 42, 62), "7": (931, 42, 62), "8": (975, 42, 62),
-        "9": (0, 42, 62), ":": (43, 17, 62), ";": (60, 17, 62), "<": (79, 27, 62),
-        "=": (108, 48, 62), ">": (157, 32, 62), "?": (188, 48, 61), "@": (239, 48, 61),
-        "A": (284, 48, 61), "B": (332, 48, 61), "C": (380, 48, 61), "D": (427, 48, 61),
-        "E": (477, 48, 61), "F": (523, 48, 61), "G": (572, 48, 61), "H": (620, 48, 61),
-        "I": (665, 23, 61), "J": (686, 47, 61), "K": (734, 47, 61), "L": (779, 47, 61),
-        "M": (829, 47, 61), "N": (878, 47, 61), "O": (926, 47, 61), "P": (972, 47, 61),
-        "Q": (0, 47, 61), "R": (44, 47, 61), "S": (93, 47, 61), "T": (141, 47, 61),
-        "U": (187, 47, 61), "V": (236, 47, 61), "W": (285, 47, 61), "X": (333, 47, 61),
-        "Y": (381, 47, 61), "Z": (428, 47, 61), "[": (477, 31, 61), "\\": (511, 42, 61),
-        "]": (558, 28, 61), "^": (592, 41, 61), "_": (639, 48, 61), "`": (688, 21, 61),
-        "a": (709, 46, 49), "b": (756, 46, 49), "c": (807, 46, 49), "d": (854, 46, 49),
-        "e": (902, 46, 49), "f": (949, 46, 49),
-        "g": (0, 46, 49), "h": (46, 46, 49), "i": (92, 17, 49), "j": (110, 44, 49),
-        "k": (160, 44, 49), "l": (207, 44, 49), "m": (254, 44, 49), "n": (300, 44, 49),
-        "o": (350, 44, 49), "p": (397, 44, 49), "q": (446, 44, 49), "r": (493, 44, 49),
-        "s": (542, 44, 49), "t": (590, 44, 49), "u": (640, 44, 49), "v": (685, 44, 49),
-        "w": (734, 44, 49), "x": (781, 44, 49), "y": (831, 44, 49), "z": (878, 44, 49),
-        "{": (927, 29, 60), "|": (955, 20, 60), "}": (974, 29, 60)
-    }
-    
-    rows_data = ["!\"#$%&'()*+,-./012345678", "9:;<=>?@ABCDEFGHIJKLMNOP", "QRSTUVWXYZ[\\\\]^_abcdef`", "ghijklmnopqrstuvwxyz{|}~"]
+    if font_cache is None:
+        font_cache = {}
 
-    for r_idx, row_text in enumerate(rows_data):
+    for r_idx, row_text in enumerate(ASCII_ROWS):
         for char in row_text:
-            if char not in manual_data: continue
-            x_base, target_w, target_h = manual_data[char]
-            
-            y_base = row1_y if r_idx == 0 else row2_y if r_idx == 1 else \
-                     (row3_lower_y if char in "abcdef" else row3_upper_y) if r_idx == 2 else \
-                     (row4_symbol_y if char in "{|}" else row4_alpha_y)
+            if char not in GLYPH_LAYOUT:
+                continue
+
+            x_base, y_base, target_w, target_h = GLYPH_LAYOUT[char]
 
             v_val = u_v if char.isupper() else l_v if char.islower() else n_v if char.isdigit() else s_v
 
@@ -108,17 +169,13 @@ def generate_sheet_image(let_f, sym_f, u_v, l_v, n_v, s_v, h_nudge, f_size, cent
                 continue
 
             font_path = let_f if char.isalpha() else sym_f
-            try: font = ImageFont.truetype(font_path, f_size)
-            except: font = ImageFont.load_default()
+            font = get_render_font(font_cache, font_path, f_size)
 
             bbox = draw.textbbox((0, 0), char, font=font)
             text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            
-            # Center horizontally within the slot
             draw_x = (x_base + (target_w - text_w) // 2 - bbox[0]) + h_nudge
-            
-            # Handle descenders for lowercase 'j', 'g', 'p', 'q', 'y'
-            if char.islower() and not center_lower and char not in "{|}~":
+
+            if char.islower() and not center_lower:
                 draw_y = (y_base + target_h - text_h - bbox[1]) - v_val
             else:
                 draw_y = (y_base + (target_h - text_h) // 2 - bbox[1]) - v_val
@@ -142,23 +199,23 @@ def save_as_dds_native(image, filename):
 class BzoneApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("BZ98 Redux Font Generator")
+        self.root.title(APP_TITLE)
         self.root.geometry("1100x950")
-        
-        # Paths
-        self.base_dir = os.path.dirname(os.path.abspath(__file__)) if not getattr(sys, 'frozen', False) else sys._MEIPASS
-        self.profiles_dir = os.path.join(os.path.abspath("."), "profiles")
-        os.makedirs(self.profiles_dir, exist_ok=True)
-        
-        # Colors
-        self.colors = {
-            "bg": "#0a0a0a", "fg": "#d4d4d4",
-            "highlight": "#00ff00", "dark_highlight": "#004400", "accent": "#00ffff"
-        }
-        
+        self.root.minsize(900, 700)
+
+        self.base_dir = app_dir()
+        self.profiles_dir = self.base_dir / "profiles"
+        self.profiles_dir.mkdir(exist_ok=True)
+        self.colors = DEFAULT_COLORS.copy()
+        self.font_cache = {}
+        self.overlay_image_cache = {}
+        self.canvas_image_id = None
+        self.last_profile_path = None
+        self._queued_logs = []
+        self._warning_cache = set()
+
         self.load_custom_fonts()
-        
-        # Settings Variables
+
         self.let_f = resource_path("Orbitron-Bold.ttf")
         self.sym_f = resource_path("Orbitron-Bold.ttf")
         self.u_v, self.l_v, self.n_v, self.s_v = tk.IntVar(value=0), tk.IntVar(value=5), tk.IntVar(value=0), tk.IntVar(value=0)
@@ -166,22 +223,33 @@ class BzoneApp:
         self.f_size = tk.IntVar(value=55)
         self.center_lower = tk.BooleanVar(value=False)
         self.show_grid = tk.BooleanVar(value=False)
+        self.overlay_enabled = tk.BooleanVar(value=False)
+        self.overlay_opacity = tk.IntVar(value=DEFAULT_OVERLAY_OPACITY)
+        self.letter_font_var = tk.StringVar()
+        self.symbol_font_var = tk.StringVar()
+        self.profile_var = tk.StringVar(value="Profile: none")
+        self.overlay_var = tk.StringVar(value="Overlay: none")
+        self.overlay_path = find_default_overlay_path()
 
         self.setup_styles()
         self.setup_ui()
-        
         self.root.configure(bg=self.colors["bg"])
+        self.refresh_status_labels()
+        self.flush_queued_logs()
+        if self.overlay_path:
+            self.log(f"Detected stock overlay atlas: {Path(self.overlay_path).name}")
         self.log("Application Initialized.")
 
     def load_custom_fonts(self):
         self.current_font = "Segoe UI"
-        font_path = os.path.join(os.path.abspath("."), "BZONE.ttf")
+        font_path = resource_path("BZONE.ttf")
         if os.path.exists(font_path):
             try:
                 if ctypes.windll.gdi32.AddFontResourceExW(font_path, 0x10, 0) > 0:
                     self.current_font = "BZONE"
-                    self.log("Loaded BZONE.ttf for UI.")
-            except: pass
+                    self.log("Loaded bundled BZONE.ttf for UI.")
+            except OSError as exc:
+                self.log(f"UI font load skipped: {exc}")
 
     def setup_styles(self):
         style = ttk.Style()
@@ -204,39 +272,39 @@ class BzoneApp:
     def setup_ui(self):
         main = ttk.Frame(self.root, padding=10)
         main.pack(fill="both", expand=True)
-        
-        # --- HEADER ---
+
         header = ttk.Frame(main)
         header.pack(fill="x", pady=(0, 20))
         h_label = tk.Label(header, text="FONT GENERATOR", font=(self.current_font, 24, "bold"), 
                          background=self.colors["bg"], foreground=self.colors["highlight"])
         h_label.pack(side="left")
-        
+
         content = ttk.Frame(main)
         content.pack(fill="both", expand=True)
-        
-        # LEFT PANEL
+
         left = ttk.Frame(content, width=350)
         left.pack(side="left", fill="y", padx=(0, 10))
-        
-        # Profiles Section
+
         prof_frame = ttk.LabelFrame(left, text=" PROFILE ", padding=10)
         prof_frame.pack(fill="x", pady=(0, 10))
         ttk.Button(prof_frame, text="LOAD PROFILE", command=self.load_profile).pack(side="left", fill="x", expand=True, padx=2)
         ttk.Button(prof_frame, text="SAVE PROFILE", command=self.save_profile).pack(side="left", fill="x", expand=True, padx=2)
+        tk.Label(prof_frame, textvariable=self.profile_var, anchor="w", background=self.colors["bg"], foreground=self.colors["accent"]).pack(fill="x", pady=(8, 0))
 
-        # Font Selection
         sel_frame = ttk.LabelFrame(left, text=" FONT SELECTION ", padding=10)
         sel_frame.pack(fill="x", pady=(0, 10))
         b1 = ttk.Button(sel_frame, text="CHOOSE LETTER FONT", command=self.set_let)
         b1.pack(fill="x")
         ToolTip(b1, "Select the TTF/OTF font for Alpha characters.")
-        
+        tk.Label(sel_frame, textvariable=self.letter_font_var, wraplength=300, justify="left", anchor="w",
+                 background=self.colors["bg"], foreground=self.colors["accent"]).pack(fill="x", pady=(4, 0))
+
         b2 = ttk.Button(sel_frame, text="CHOOSE SYMBOL FONT", command=self.set_sym)
         b2.pack(fill="x", pady=5)
         ToolTip(b2, "Select the TTF/OTF font for Symbols and Numbers.")
+        tk.Label(sel_frame, textvariable=self.symbol_font_var, wraplength=300, justify="left", anchor="w",
+                 background=self.colors["bg"], foreground=self.colors["accent"]).pack(fill="x")
 
-        # Font Settings
         set_frame = ttk.LabelFrame(left, text=" FONT SETTINGS ", padding=10)
         set_frame.pack(fill="x")
         ttk.Label(set_frame, text="Global Font Size").pack()
@@ -245,7 +313,6 @@ class BzoneApp:
                          command=lambda x: self.update_preview())
         s_size.pack(fill="x")
 
-        # Vertical Nudges
         nudge_frame = ttk.LabelFrame(left, text=" VERTICAL NUDGES ", padding=10)
         nudge_frame.pack(fill="x", pady=10)
         for lbl, var in [("Uppercase", self.u_v), ("Lowercase", self.l_v), ("Numbers", self.n_v), ("Symbols", self.s_v)]:
@@ -253,8 +320,7 @@ class BzoneApp:
             tk.Scale(nudge_frame, from_=-30, to=30, orient="horizontal", variable=var, 
                     bg=self.colors["bg"], fg=self.colors["fg"], highlightthickness=0,
                     command=lambda x: self.update_preview()).pack(fill="x")
-        
-        # Presets (New Feature)
+
         preset_frame = ttk.Frame(nudge_frame)
         preset_frame.pack(fill="x", pady=5)
         ttk.Label(preset_frame, text="Presets:").pack(side="left")
@@ -265,7 +331,6 @@ class BzoneApp:
         p3 = ttk.Button(preset_frame, text="Abt-Dn", width=6, command=lambda: self.apply_preset(5, 5, 5, 5))
         p3.pack(side="left", padx=2)
 
-        # Alignment
         align_frame = ttk.LabelFrame(left, text=" ALIGNMENT & VIEW ", padding=10)
         align_frame.pack(fill="x")
         ttk.Label(align_frame, text="Horizontal Shift").pack()
@@ -275,32 +340,110 @@ class BzoneApp:
         ttk.Checkbutton(align_frame, text="Force Center Lowercase", variable=self.center_lower, command=self.update_preview).pack(anchor="w")
         ttk.Checkbutton(align_frame, text="Show Layout Grid", variable=self.show_grid, command=self.update_preview).pack(anchor="w")
 
+        overlay_frame = ttk.LabelFrame(left, text=" STOCK OVERLAY ", padding=10)
+        overlay_frame.pack(fill="x", pady=(10, 0))
+        ttk.Checkbutton(overlay_frame, text="Show Stock Compare Overlay", variable=self.overlay_enabled, command=self.update_preview).pack(anchor="w")
+        ttk.Label(overlay_frame, text="Overlay Opacity").pack()
+        tk.Scale(overlay_frame, from_=0, to=100, orient="horizontal", variable=self.overlay_opacity,
+                bg=self.colors["bg"], fg=self.colors["fg"], highlightthickness=0,
+                command=lambda x: self.update_preview()).pack(fill="x")
+        ttk.Button(overlay_frame, text="AUTO-DETECT OVERLAY", command=self.auto_detect_overlay).pack(fill="x", pady=(4, 0))
+        ttk.Button(overlay_frame, text="CHOOSE OVERLAY IMAGE", command=self.set_overlay_path).pack(fill="x", pady=(4, 0))
+        tk.Label(overlay_frame, textvariable=self.overlay_var, wraplength=300, justify="left", anchor="w",
+                 background=self.colors["bg"], foreground=self.colors["accent"]).pack(fill="x", pady=(6, 0))
+
         exp_btn = ttk.Button(left, text="EXPORT DDS", style="Success.TButton", command=self.export_dds)
         exp_btn.pack(fill="x", pady=20, ipady=10)
-        
+
         ttk.Button(left, text="About", command=self.show_about).pack(side="bottom", fill="x")
 
-        # RIGHT PANEL (Preview & Logs)
         right = ttk.Frame(content)
         right.pack(side="right", fill="both", expand=True)
-        
-        # Canvas Container for centering
+
         canvas_container = tk.Frame(right, bg="#000")
         canvas_container.pack(fill="both", expand=True)
         self.canvas = tk.Canvas(canvas_container, bg="black", width=512, height=512, highlightthickness=1, highlightbackground=self.colors["dark_highlight"])
         self.canvas.place(relx=0.5, rely=0.5, anchor="center")
-        
-        # Log Box
+
         self.log_box = tk.Text(right, height=10, state="disabled", bg="#050505", fg=self.colors["fg"], font=("Consolas", 9))
         self.log_box.pack(fill="x", side="bottom", pady=(10, 0))
-        
+
         self.update_preview()
 
     def log(self, msg):
+        if not hasattr(self, "log_box"):
+            self._queued_logs.append(msg)
+            return
         self.log_box.config(state="normal")
         self.log_box.insert("end", f"> {msg}\n")
         self.log_box.see("end")
         self.log_box.config(state="disabled")
+
+    def flush_queued_logs(self):
+        queued = self._queued_logs
+        self._queued_logs = []
+        for msg in queued:
+            self.log(msg)
+
+    def warn_once(self, msg):
+        if msg in self._warning_cache:
+            return
+        self._warning_cache.add(msg)
+        self.log(msg)
+
+    def refresh_status_labels(self):
+        self.letter_font_var.set(f"Letters: {Path(self.let_f).name}")
+        self.symbol_font_var.set(f"Symbols: {Path(self.sym_f).name}")
+        profile_name = Path(self.last_profile_path).name if self.last_profile_path else "none"
+        self.profile_var.set(f"Profile: {profile_name}")
+        overlay_name = Path(self.overlay_path).name if self.overlay_path else "none"
+        self.overlay_var.set(f"Overlay: {overlay_name}")
+
+    def get_effective_font_path(self, font_path, role_name):
+        if font_path and os.path.exists(font_path):
+            return font_path
+
+        fallback = resource_path("Orbitron-Bold.ttf")
+        missing_name = font_path if font_path else "<unset>"
+        self.warn_once(f"{role_name} font not found: {missing_name}. Using Orbitron-Bold.ttf.")
+        return fallback
+
+    def get_overlay_image(self):
+        if not self.overlay_path:
+            self.warn_once("Stock overlay is enabled but no overlay image is selected.")
+            return None
+        if not os.path.exists(self.overlay_path):
+            self.warn_once(f"Overlay image not found: {self.overlay_path}")
+            return None
+
+        image = self.overlay_image_cache.get(self.overlay_path)
+        if image is None:
+            try:
+                with Image.open(self.overlay_path) as raw_image:
+                    image = raw_image.convert("RGBA")
+                self.overlay_image_cache[self.overlay_path] = image
+            except OSError as exc:
+                self.warn_once(f"Failed to load overlay image: {exc}")
+                return None
+        return image
+
+    def build_overlay_preview(self, generated_layer):
+        overlay_image = self.get_overlay_image()
+        if overlay_image is None:
+            return None
+
+        if overlay_image.size != (ATLAS_SIZE, ATLAS_SIZE):
+            overlay_image = overlay_image.resize((ATLAS_SIZE, ATLAS_SIZE), Image.Resampling.NEAREST)
+
+        compare_image = Image.new("RGBA", (ATLAS_SIZE, ATLAS_SIZE), (0, 0, 0, 255))
+        generated_alpha = generated_layer.getchannel("A")
+        compare_image.paste((0, 255, 255, 255), (0, 0), generated_alpha)
+
+        stock_mask = ImageOps.grayscale(overlay_image)
+        opacity_scale = max(0, min(self.overlay_opacity.get(), 100)) / 100.0
+        stock_mask = stock_mask.point(lambda px: int(px * opacity_scale))
+        compare_image.paste((255, 80, 80, 255), (0, 0), stock_mask)
+        return compare_image
 
     def apply_preset(self, u, l, n, s):
         self.u_v.set(u)
@@ -311,8 +454,9 @@ class BzoneApp:
         self.log(f"Applied preset: {u}, {l}, {n}, {s}")
 
     def save_profile(self):
-        f = filedialog.asksaveasfilename(initialdir=self.profiles_dir, defaultextension=".json", filetypes=[("Profile", "*.json")])
-        if not f: return
+        f = filedialog.asksaveasfilename(initialdir=str(self.profiles_dir), defaultextension=".json", filetypes=[("Profile", "*.json")])
+        if not f:
+            return
         data = {
             "u_v": self.u_v.get(), "l_v": self.l_v.get(), "n_v": self.n_v.get(), "s_v": self.s_v.get(),
             "h_n": self.h_n.get(), "f_size": self.f_size.get(),
@@ -320,15 +464,20 @@ class BzoneApp:
             "let_f": self.let_f, "sym_f": self.sym_f
         }
         try:
-            with open(f, 'w') as outfile: json.dump(data, outfile, indent=4)
+            with open(f, 'w', encoding="utf-8") as outfile:
+                json.dump(data, outfile, indent=4)
+            self.last_profile_path = f
+            self.refresh_status_labels()
             self.log(f"Profile saved: {os.path.basename(f)}")
-        except Exception as e: messagebox.showerror("Error", f"Failed to save profile: {e}")
+        except OSError as e:
+            messagebox.showerror("Error", f"Failed to save profile: {e}")
 
     def load_profile(self):
-        f = filedialog.askopenfilename(initialdir=self.profiles_dir, filetypes=[("Profile", "*.json")])
-        if not f: return
+        f = filedialog.askopenfilename(initialdir=str(self.profiles_dir), filetypes=[("Profile", "*.json")])
+        if not f:
+            return
         try:
-            with open(f, 'r') as infile:
+            with open(f, 'r', encoding="utf-8") as infile:
                 data = json.load(infile)
                 self.u_v.set(data.get("u_v", 0))
                 self.l_v.set(data.get("l_v", 5))
@@ -339,9 +488,12 @@ class BzoneApp:
                 self.center_lower.set(data.get("center_lower", False))
                 self.let_f = data.get("let_f", self.let_f)
                 self.sym_f = data.get("sym_f", self.sym_f)
+            self.last_profile_path = f
+            self.refresh_status_labels()
             self.update_preview()
             self.log(f"Profile loaded: {os.path.basename(f)}")
-        except Exception as e: messagebox.showerror("Error", f"Failed to load profile: {e}")
+        except (OSError, json.JSONDecodeError) as e:
+            messagebox.showerror("Error", f"Failed to load profile: {e}")
 
     def show_about(self):
         about = tk.Toplevel(self.root)
@@ -358,20 +510,52 @@ class BzoneApp:
         link.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/GrizzlyOne95/Battlezone98ReduxFontGenerator"))
         ttk.Button(container, text="Close", command=about.destroy).pack(pady=20)
 
+    def auto_detect_overlay(self):
+        detected = find_default_overlay_path()
+        if detected:
+            self.overlay_path = detected
+            self.refresh_status_labels()
+            self.update_preview()
+            self.log(f"Detected stock overlay atlas: {os.path.basename(detected)}")
+        else:
+            self.log("No stock overlay atlas detected in common Battlezone install paths.")
+
+    def set_overlay_path(self):
+        selected = filedialog.askopenfilename(
+            title="Choose stock overlay atlas",
+            filetypes=[("Images", "*.png *.dds *.tga"), ("All files", "*.*")],
+        )
+        if selected:
+            self.overlay_path = selected
+            self.refresh_status_labels()
+            self.update_preview()
+            self.log(f"Overlay image updated: {os.path.basename(selected)}")
+
     def update_preview(self):
-        final_img, _ = generate_sheet_image(self.let_f, self.sym_f, self.u_v.get(), self.l_v.get(), 
-                                            self.n_v.get(), self.s_v.get(), self.h_n.get(), 
-                                            self.f_size.get(),
-                                            self.center_lower.get(), self.show_grid.get())
+        let_font = self.get_effective_font_path(self.let_f, "Letter")
+        sym_font = self.get_effective_font_path(self.sym_f, "Symbol")
+        final_img, generated_layer = generate_sheet_image(let_font, sym_font, self.u_v.get(), self.l_v.get(),
+                                                          self.n_v.get(), self.s_v.get(), self.h_n.get(),
+                                                          self.f_size.get(),
+                                                          self.center_lower.get(), self.show_grid.get(), self.font_cache)
+        if self.overlay_enabled.get():
+            overlay_preview = self.build_overlay_preview(generated_layer)
+            if overlay_preview is not None:
+                final_img = overlay_preview
         prev = final_img.resize((512, 512), Image.Resampling.LANCZOS)
         self.tk_img = ImageTk.PhotoImage(prev)
-        self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+        if self.canvas_image_id is None:
+            self.canvas_image_id = self.canvas.create_image(0, 0, anchor="nw", image=self.tk_img)
+        else:
+            self.canvas.itemconfigure(self.canvas_image_id, image=self.tk_img)
 
     def export_dds(self):
-        _, export_img = generate_sheet_image(self.let_f, self.sym_f, self.u_v.get(), self.l_v.get(), 
-                                             self.n_v.get(), self.s_v.get(), self.h_n.get(), 
+        let_font = self.get_effective_font_path(self.let_f, "Letter")
+        sym_font = self.get_effective_font_path(self.sym_f, "Symbol")
+        _, export_img = generate_sheet_image(let_font, sym_font, self.u_v.get(), self.l_v.get(),
+                                             self.n_v.get(), self.s_v.get(), self.h_n.get(),
                                              self.f_size.get(),
-                                             self.center_lower.get(), False)
+                                             self.center_lower.get(), False, self.font_cache)
         f_path = filedialog.asksaveasfilename(defaultextension=".dds", initialfile="bzfont.dds", filetypes=[("DDS", "*.dds")])
         if f_path:
             try:
@@ -384,15 +568,17 @@ class BzoneApp:
 
     def set_let(self):
         f = filedialog.askopenfilename(filetypes=[("Fonts", "*.ttf *.otf")])
-        if f: 
+        if f:
             self.let_f = f
+            self.refresh_status_labels()
             self.update_preview()
             self.log(f"Letter Font updated: {os.path.basename(f)}")
 
     def set_sym(self):
         f = filedialog.askopenfilename(filetypes=[("Fonts", "*.ttf *.otf")])
-        if f: 
+        if f:
             self.sym_f = f
+            self.refresh_status_labels()
             self.update_preview()
             self.log(f"Symbol Font updated: {os.path.basename(f)}")
 

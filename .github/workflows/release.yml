@@ -40,6 +40,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Smoke test renderer
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import bz_generator
+
+          font_path = bz_generator.resource_path("Orbitron-Bold.ttf")
+          preview, alpha = bz_generator.generate_sheet_image(
+              font_path,
+              font_path,
+              0,
+              5,
+              0,
+              0,
+              0,
+              55,
+              False,
+              False,
+          )
+          assert preview.size == (1024, 1024)
+          assert alpha.size == (1024, 1024)
+
+          out_path = Path("smoke-test.dds")
+          bz_generator.save_as_dds_native(alpha, out_path)
+          assert out_path.exists()
+          assert out_path.stat().st_size > 128
+          PY
+
       - name: Build with PyInstaller
         run: |
           python -m PyInstaller --noconsole --onefile --add-data "Orbitron-Bold.ttf${{ matrix.sep }}." --add-data "BZONE.ttf${{ matrix.sep }}." bz_generator.py

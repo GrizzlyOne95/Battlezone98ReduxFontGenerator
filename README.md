@@ -1,5 +1,5 @@
 # Battlezone 98 Redux Font Sheet Generator
-A lightweight tool for modders to create custom `bzone.png` font atlases.
+A lightweight tool for modders to create custom `bzfont.dds` font atlases.
 
 Developed by **GrizzlyOne95**.
 
@@ -10,6 +10,8 @@ Developed by **GrizzlyOne95**.
 ## Features
 - **Battlezone Aesthetic UI:** New dark mode theme with neon highlights using the `BZONE` font.
 - **Profile System:** Save and load custom font configurations.
+- **Stock-Derived Layout:** Atlas slot coordinates now follow the stock `bzfont.st` sprite table scaled to the 1024 atlas.
+- **Stock Compare Overlay:** Preview your generated atlas against the stock `bzone.png` atlas with adjustable opacity.
 - **Auto-Nudge Presets:** Quick-access buttons for common vertical alignment settings.
 - **Dual Font Support:** Use one font for letters and another for numbers/symbols.
 - **Auto-Alignment:** Automatically sit characters on the correct baseline for the BZ98 engine.
@@ -44,7 +46,14 @@ If you want to run from source:
 2. Install dependencies: `pip install -r requirements.txt`.
 3. Run: `python bz_generator.py`.
 
-Compiler Command: python -m PyInstaller --noconsole --onefile --add-data "Orbitron-Bold.ttf;." bz_generator.py
+Compiler Command: python -m PyInstaller --noconsole --onefile --add-data "Orbitron-Bold.ttf;." --add-data "BZONE.ttf;." bz_generator.py
+
+### Stock Coordinate Reference
+If you want the stock Battlezone character sprite coordinates instead of manually measuring them, use the game's `Edit\stock\bzfont.st` file. This repo includes a helper script:
+
+`python tools\dump_bzfont_st.py "C:\Users\istuart\Documents\Battlezone 98 Redux\Edit\stock\bzfont.st"`
+
+That sprite table contains `char.<code> -> U V W H` entries for the stock atlas.
 
 ## Credits
 - **Tool Development:** GrizzlyOne95

@@ -439,7 +439,12 @@ class BzoneApp:
         generated_alpha = generated_layer.getchannel("A")
         compare_image.paste((0, 255, 255, 255), (0, 0), generated_alpha)
 
-        stock_mask = ImageOps.grayscale(overlay_image)
+        stock_alpha = overlay_image.getchannel("A")
+        alpha_min, alpha_max = stock_alpha.getextrema()
+        if alpha_max > 0 and alpha_min < alpha_max:
+            stock_mask = stock_alpha
+        else:
+            stock_mask = ImageOps.grayscale(overlay_image)
         opacity_scale = max(0, min(self.overlay_opacity.get(), 100)) / 100.0
         stock_mask = stock_mask.point(lambda px: int(px * opacity_scale))
         compare_image.paste((255, 80, 80, 255), (0, 0), stock_mask)

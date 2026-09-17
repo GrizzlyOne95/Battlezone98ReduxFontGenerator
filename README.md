@@ -1,11 +1,33 @@
-# Battlezone 98 Redux Font Sheet Generator
-A lightweight tool for modders to create custom `bzfont.dds` font atlases.
+# Battlezone Font Generator
+A lightweight tool for modders to create custom `bzfont.dds` font atlases for Battlezone 98 Redux.
 
 Developed by **GrizzlyOne95**.
 
+## Release Builds
+
+Download the latest platform archive from the [Releases](../../releases) section. Executable names are intentionally stable and versionless:
+
+- Windows: `BZFontGenerator.exe`
+- Linux/macOS: `BZFontGenerator`
+
+Release archives carry the version and platform, for example:
+
+- `Battlezone98ReduxFontGenerator-v2.4.2-windows.zip`
+- `Battlezone98ReduxFontGenerator-v2.4.2-linux.tar.gz`
+- `Battlezone98ReduxFontGenerator-v2.4.2-macos.tar.gz`
+
+Official Windows builds use the shared **Battlezone Modding Tools** product identity:
+
+```text
+FileDescription: Battlezone Font Generator
+ProductName: Battlezone Modding Tools
+CompanyName: GrizzlyOne95
+OriginalFilename: BZFontGenerator.exe
+```
+
+`FileVersion` and `ProductVersion` are derived from the release tag.
+
 <img width="1102" height="982" alt="image" src="https://github.com/user-attachments/assets/9b0d8439-8a26-42b6-9b27-c5292aab1d04" />
-
-
 
 ## Features
 - **Battlezone Aesthetic UI:** New dark mode theme with neon highlights using the `BZONE` font.
@@ -22,8 +44,8 @@ Developed by **GrizzlyOne95**.
 
 ## How to Use
 ### For Users
-1. Download the latest `bz_generator.exe` from the [Releases](../../releases) section.
-2. Run the application.
+1. Download the latest archive for your platform from the [Releases](../../releases) section.
+2. Run `BZFontGenerator.exe` on Windows or `BZFontGenerator` on Linux/macOS.
 3. Select your desired `.ttf` or `.otf` font files.
 4. Click **Export DDS**.
 5. Copy the resulting `bzfont.dds` into your mod's texture directory.
@@ -33,7 +55,6 @@ Developed by **GrizzlyOne95**.
 ### Overlay comparison between generated font and original Battlezone font
 
 <img width="700" height="225" alt="image" src="https://github.com/user-attachments/assets/0ed2a0a2-1d5c-473e-bc2f-80557a5dd336" />
-
 
 ### Troubleshooting
 - If characters generate missing or with rectangles/invalid symbols, your font most likely is missing those characters. Try another font file.
@@ -46,7 +67,7 @@ If you want to run from source:
 2. Install dependencies: `pip install -r requirements.txt`.
 3. Run: `python bz_generator.py`.
 
-Compiler Command: python -m PyInstaller --noconsole --onefile --add-data "Orbitron-Bold.ttf;." --add-data "BZONE.ttf;." bz_generator.py
+The release workflow builds the standalone binaries with PyInstaller and bundles `Orbitron-Bold.ttf`, `BZONE.ttf`, and the canonical application icon.
 
 ### Stock Coordinate Reference
 If you want the stock Battlezone character sprite coordinates instead of manually measuring them, use the game's `Edit\stock\bzfont.st` file. This repo includes a helper script:

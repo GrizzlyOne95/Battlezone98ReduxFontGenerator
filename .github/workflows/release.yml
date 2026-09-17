@@ -71,7 +71,7 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          python -m PyInstaller --noconsole --onefile --icon "branding/app_icon.png" --add-data "Orbitron-Bold.ttf${{ matrix.sep }}." --add-data "BZONE.ttf${{ matrix.sep }}." --add-data "branding/app_icon.png${{ matrix.sep }}branding" --runtime-hook branding/pyinstaller_icon_hook.py bz_generator.py
+          python -m PyInstaller --noconsole --onefile --icon "branding/app_icon.ico" --add-data "branding/app_icon.ico${{ matrix.sep }}branding" --add-data "Orbitron-Bold.ttf${{ matrix.sep }}." --add-data "BZONE.ttf${{ matrix.sep }}." --add-data "branding/app_icon.png${{ matrix.sep }}branding" --runtime-hook branding/pyinstaller_icon_hook.py bz_generator.py
 
       - name: Rename binary
         shell: bash

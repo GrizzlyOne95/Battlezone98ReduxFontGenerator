@@ -11,19 +11,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
         include:
           - os: windows-latest
-            artifact_name: bz_generator.exe
-            asset_name: bz_generator-windows.exe
+            platform: windows
+            artifact_name: BZFontGenerator.exe
             sep: ";"
           - os: ubuntu-latest
-            artifact_name: bz_generator
-            asset_name: bz_generator-linux
+            platform: linux
+            artifact_name: BZFontGenerator
             sep: ":"
           - os: macos-latest
-            artifact_name: bz_generator
-            asset_name: bz_generator-macos
+            platform: macos
+            artifact_name: BZFontGenerator
             sep: ":"
 
     steps:
@@ -69,20 +68,27 @@ jobs:
           assert out_path.stat().st_size > 128
           PY
 
-      - name: Build with PyInstaller
+      - name: Generate Windows version metadata
+        if: matrix.os == 'windows-latest'
         run: |
-          python -m PyInstaller --noconsole --onefile --icon "branding/app_icon.ico" --add-data "branding/app_icon.ico${{ matrix.sep }}branding" --add-data "Orbitron-Bold.ttf${{ matrix.sep }}." --add-data "BZONE.ttf${{ matrix.sep }}." --add-data "branding/app_icon.png${{ matrix.sep }}branding" --runtime-hook branding/pyinstaller_icon_hook.py bz_generator.py
+          python scripts/generate_version_info.py --version "${{ github.ref_name }}" --output branding/version_info.txt
 
-      - name: Rename binary
-        shell: bash
+      - name: Build with PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
         run: |
-          mv dist/${{ matrix.artifact_name }} dist/${{ matrix.asset_name }}
+          python -m PyInstaller --noconsole --onefile --name BZFontGenerator --icon "branding/app_icon.ico" --version-file "branding/version_info.txt" --add-data "branding/app_icon.ico${{ matrix.sep }}branding" --add-data "Orbitron-Bold.ttf${{ matrix.sep }}." --add-data "BZONE.ttf${{ matrix.sep }}." --add-data "branding/app_icon.png${{ matrix.sep }}branding" --runtime-hook branding/pyinstaller_icon_hook.py bz_generator.py
 
-      - name: Upload Artifact
+      - name: Build with PyInstaller (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          python -m PyInstaller --noconsole --onefile --name BZFontGenerator --icon "branding/app_icon.ico" --add-data "branding/app_icon.ico${{ matrix.sep }}branding" --add-data "Orbitron-Bold.ttf${{ matrix.sep }}." --add-data "BZONE.ttf${{ matrix.sep }}." --add-data "branding/app_icon.png${{ matrix.sep }}branding" --runtime-hook branding/pyinstaller_icon_hook.py bz_generator.py
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset_name }}
-          path: dist/${{ matrix.asset_name }}
+          name: Battlezone98ReduxFontGenerator-${{ matrix.platform }}
+          path: dist/${{ matrix.artifact_name }}
+          if-no-files-found: error
 
   release:
     name: Create Release
@@ -94,18 +100,34 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: release-artifacts
 
-      - name: List artifacts
-        run: ls -R artifacts
+      - name: Package versioned release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-packages/windows release-packages/linux release-packages/macos
+
+          cp release-artifacts/Battlezone98ReduxFontGenerator-windows/BZFontGenerator.exe release-packages/windows/
+          cp release-artifacts/Battlezone98ReduxFontGenerator-linux/BZFontGenerator release-packages/linux/
+          cp release-artifacts/Battlezone98ReduxFontGenerator-macos/BZFontGenerator release-packages/macos/
+
+          chmod +x release-packages/linux/BZFontGenerator release-packages/macos/BZFontGenerator
+
+          (cd release-packages/windows && zip -q ../Battlezone98ReduxFontGenerator-${GITHUB_REF_NAME}-windows.zip BZFontGenerator.exe)
+          (cd release-packages/linux && tar -czf ../Battlezone98ReduxFontGenerator-${GITHUB_REF_NAME}-linux.tar.gz BZFontGenerator)
+          (cd release-packages/macos && tar -czf ../Battlezone98ReduxFontGenerator-${GITHUB_REF_NAME}-macos.tar.gz BZFontGenerator)
+
+          ls -lh release-packages/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/bz_generator-windows.exe/bz_generator-windows.exe
-            artifacts/bz_generator-linux/bz_generator-linux
-            artifacts/bz_generator-macos/bz_generator-macos
+            release-packages/Battlezone98ReduxFontGenerator-v*-windows.zip
+            release-packages/Battlezone98ReduxFontGenerator-v*-linux.tar.gz
+            release-packages/Battlezone98ReduxFontGenerator-v*-macos.tar.gz
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
           generate_release_notes: true
